@@ -68,6 +68,13 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-sc
 
 > **Note:** Run this immediately when you get "connection refused" errors after reboot. Diagnoses and fixes common startup issues.
 
+**If kubelet specifically fails to start:**
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/troubleshoot-kubelet.sh)"
+```
+
+> **Note:** Dedicated kubelet troubleshooting script that diagnoses and fixes kubelet-specific startup issues including swap, certificates, and configuration problems.
+
 ### 🔒 Security Note for One-Liner Installation
 
 While the one-liner installation is convenient, for production environments consider:

@@ -72,16 +72,77 @@ info "Checking kubelet status..."
 if systemctl is-active --quiet kubelet; then
     success "kubelet is running"
 else
-    warning "kubelet is not running, starting it..."
-    systemctl start kubelet
-    sleep 15
-    if systemctl is-active --quiet kubelet; then
-        success "kubelet started successfully"
-    else
-        error "Failed to start kubelet"
-        systemctl status kubelet
-        exit 1
+    warning "kubelet is not running, diagnosing the issue..."
+    
+    # Check kubelet logs for common issues
+    log "Checking kubelet logs for errors..."
+    KUBELET_LOGS=$(journalctl -u kubelet --no-pager -l --since "5 minutes ago" | tail -10)
+    echo "$KUBELET_LOGS"
+    
+    # Common fixes for kubelet startup issues
+    log "Applying common kubelet fixes..."
+    
+    # Fix 1: Ensure swap is disabled
+    if swapon --show | grep -q "/"; then
+        warning "Swap is enabled, disabling it..."
+        swapoff -a
+        sleep 5
     fi
+    
+    # Fix 2: Reset kubelet configuration if corrupted
+    if echo "$KUBELET_LOGS" | grep -q "failed to load kubelet config file"; then
+        warning "Kubelet config appears corrupted, resetting..."
+        systemctl stop kubelet
+        rm -f /var/lib/kubelet/config.yaml
+        sleep 5
+    fi
+    
+    # Fix 3: Clean up kubelet state if needed
+    if echo "$KUBELET_LOGS" | grep -q "failed to sync node status"; then
+        warning "Cleaning kubelet state..."
+        systemctl stop kubelet
+        rm -rf /var/lib/kubelet/pods/*
+        sleep 5
+    fi
+    
+    # Fix 4: Ensure containerd socket is accessible
+    if [ ! -S /run/containerd/containerd.sock ]; then
+        warning "Containerd socket not found, restarting containerd..."
+        systemctl restart containerd
+        sleep 15
+    fi
+    
+    # Try starting kubelet with multiple attempts
+    for attempt in {1..5}; do
+        log "Starting kubelet (attempt $attempt/5)..."
+        systemctl start kubelet
+        sleep 10
+        
+        if systemctl is-active --quiet kubelet; then
+            success "kubelet started successfully"
+            break
+        else
+            warning "kubelet failed to start on attempt $attempt"
+            if [ $attempt -eq 5 ]; then
+                error "Failed to start kubelet after 5 attempts"
+                echo ""
+                error "Kubelet status:"
+                systemctl status kubelet --no-pager -l
+                echo ""
+                error "Recent kubelet logs:"
+                journalctl -u kubelet --no-pager -l --since "10 minutes ago" | tail -20
+                echo ""
+                error "Containerd status:"
+                systemctl status containerd --no-pager -l
+                echo ""
+                error "Please check the logs above and fix any underlying issues"
+                exit 1
+            else
+                # Wait before next attempt
+                sleep 10
+            fi
+        fi
+    done
 fi
 
 # Step 2: Check if this is a master node
