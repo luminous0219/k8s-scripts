@@ -17,7 +17,6 @@ NC='\033[0m' # No Color
 
 # NVIDIA versions
 NVIDIA_DRIVER_VERSION="550"  # Latest stable branch
-NVIDIA_CONTAINER_TOOLKIT_VERSION="1.16.2"
 NVIDIA_DEVICE_PLUGIN_VERSION="v0.16.2"
 
 # Logging function
@@ -187,8 +186,31 @@ install_container_toolkit() {
     
     apt-get update -y
     
-    # Install NVIDIA Container Toolkit
-    apt-get install -y nvidia-container-toolkit=$NVIDIA_CONTAINER_TOOLKIT_VERSION-1
+    # Show available versions for debugging
+    info "Available NVIDIA Container Toolkit versions:"
+    apt-cache policy nvidia-container-toolkit | grep -A 5 "Version table" || true
+    
+    # Install NVIDIA Container Toolkit (latest available version)
+    log "Installing NVIDIA Container Toolkit (latest version)..."
+    if ! apt-get install -y nvidia-container-toolkit; then
+        warning "Failed to install nvidia-container-toolkit, trying to fix dependencies..."
+        
+        # Show dependency information
+        info "Checking package dependencies:"
+        apt-cache depends nvidia-container-toolkit || true
+        
+        # Try to fix broken dependencies
+        apt-get install -f -y
+        
+        # Try again
+        if ! apt-get install -y nvidia-container-toolkit; then
+            error "Failed to install NVIDIA Container Toolkit"
+            error "Please check the package dependencies manually:"
+            error "apt-cache policy nvidia-container-toolkit"
+            error "apt-cache policy nvidia-container-toolkit-base"
+            exit 1
+        fi
+    fi
     
     success "NVIDIA Container Toolkit installed"
 }
@@ -368,7 +390,11 @@ display_post_install_info() {
     echo "NVIDIA INSTALLATION SUMMARY"
     echo "=============================================="
     echo "• NVIDIA Driver: $NVIDIA_DRIVER_VERSION series"
-    echo "• Container Toolkit: $NVIDIA_CONTAINER_TOOLKIT_VERSION"
+    
+    # Get actual installed version of container toolkit
+    CONTAINER_TOOLKIT_VERSION=$(dpkg -l | grep nvidia-container-toolkit | awk '{print $3}' | head -1 || echo "Unknown")
+    echo "• Container Toolkit: $CONTAINER_TOOLKIT_VERSION"
+    
     echo "• Device Plugin: $NVIDIA_DEVICE_PLUGIN_VERSION"
     echo "• Containerd: Configured for GPU support"
     
