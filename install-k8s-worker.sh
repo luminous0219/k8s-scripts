@@ -53,10 +53,70 @@ apt-get upgrade -y
 log "Installing required packages..."
 apt-get install -y apt-transport-https ca-certificates curl gpg
 
-# Disable swap
-log "Disabling swap..."
-swapoff -a
-sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+# Disable swap completely and permanently
+disable_swap_completely() {
+    log "Disabling swap completely and permanently..."
+    
+    # Turn off all swap immediately
+    swapoff -a
+    
+    # Remove or comment out all swap entries in /etc/fstab
+    sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+    sed -i '/swap/d' /etc/fstab 2>/dev/null || true
+    
+    # Remove any swap files
+    if [ -f /swapfile ]; then
+        log "Removing /swapfile..."
+        rm -f /swapfile
+    fi
+    
+    # Remove any other common swap files
+    for swapfile in /swap.img /var/swap /swap; do
+        if [ -f "$swapfile" ]; then
+            log "Removing $swapfile..."
+            rm -f "$swapfile"
+        fi
+    done
+    
+    # Disable swap in systemd
+    systemctl mask swap.target
+    
+    # Create a systemd service to ensure swap stays disabled after reboot
+    cat <<EOF > /etc/systemd/system/disable-swap.service
+[Unit]
+Description=Disable Swap
+DefaultDependencies=false
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/swapoff -a
+ExecStart=/bin/bash -c 'echo "Swap disabled for Kubernetes"'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=basic.target
+EOF
+    
+    # Enable the disable-swap service
+    systemctl daemon-reload
+    systemctl enable disable-swap.service
+    
+    # Verify swap is disabled
+    if [ "$(swapon --show | wc -l)" -eq 0 ]; then
+        success "Swap has been completely disabled"
+    else
+        error "Swap is still active. Manual intervention may be required."
+        swapon --show
+    fi
+    
+    # Add vm.swappiness=0 to prevent any swap usage
+    echo "vm.swappiness=0" >> /etc/sysctl.d/k8s.conf
+    
+    success "Swap has been permanently disabled and will remain disabled after reboot"
+}
+
+disable_swap_completely
 
 # Load kernel modules
 log "Loading required kernel modules..."
