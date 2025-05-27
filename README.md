@@ -23,6 +23,15 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-sc
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-single-node.sh)"
 ```
 
+### NVIDIA GPU Drivers Setup (Optional)
+
+**Install NVIDIA drivers for GPU workloads:**
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-nvidia-drivers.sh)"
+```
+
+> **Note:** NVIDIA drivers enable GPU workloads in Kubernetes. Run this on worker nodes with NVIDIA GPUs after cluster setup.
+
 ### MetalLB Load Balancer Setup (Optional)
 
 **Install MetalLB for LoadBalancer services:**
@@ -67,6 +76,7 @@ While the one-liner installation is convenient, for production environments cons
 - **Error Handling** - Robust validation and error recovery
 - **CNI Included** - Flannel CNI automatically configured
 - **One-Liner Installation** - No need to clone repository
+- **NVIDIA GPU Support** - Optional GPU drivers and Kubernetes device plugin
 - **MetalLB Support** - Optional LoadBalancer functionality for bare metal clusters
 - **ArgoCD Integration** - Optional GitOps functionality with MetalLB LoadBalancer
 
@@ -401,3 +411,256 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server
 kubectl delete secret argocd-initial-admin-secret -n argocd
 kubectl rollout restart deployment argocd-server -n argocd
 ```
+
+## 🎮 NVIDIA GPU Drivers Setup
+
+NVIDIA GPU drivers enable GPU-accelerated workloads in Kubernetes, allowing you to run machine learning, AI, and high-performance computing applications.
+
+### Why NVIDIA GPU Support?
+
+GPU support in Kubernetes enables:
+- **Machine Learning workloads** - Train and run ML models with GPU acceleration
+- **AI applications** - Deploy AI inference services with high performance
+- **Scientific computing** - Run CUDA-based applications and simulations
+- **Video processing** - Hardware-accelerated video encoding/decoding
+- **Cryptocurrency mining** - GPU-based mining operations
+
+### Prerequisites
+
+NVIDIA GPU drivers should be installed on worker nodes that have NVIDIA GPUs:
+- **Physical NVIDIA GPU** - System must have NVIDIA graphics card
+- **Kubernetes cluster** - Worker node should be part of a Kubernetes cluster
+- **Ubuntu/Debian** - Compatible with Ubuntu 20.04+ and Debian 11+
+
+### Installation
+
+**One-liner installation:**
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-nvidia-drivers.sh)"
+```
+
+### What the NVIDIA script does:
+
+1. **GPU Detection** - Automatically detects NVIDIA GPUs using `lspci`
+2. **Driver Installation** - Installs latest stable NVIDIA drivers (550 series)
+3. **Container Toolkit** - Installs NVIDIA Container Toolkit for container support
+4. **Containerd Configuration** - Configures containerd runtime for GPU access
+5. **Device Plugin** - Deploys NVIDIA Device Plugin to Kubernetes
+6. **Verification** - Tests GPU functionality and Kubernetes integration
+7. **Optional test workload** - Creates sample GPU pod for validation
+
+### Installation Process
+
+**What gets installed:**
+- **NVIDIA Driver 550** - Latest stable driver series
+- **NVIDIA Container Toolkit** - Enables GPU access in containers
+- **NVIDIA Device Plugin** - Exposes GPUs as Kubernetes resources
+- **Containerd configuration** - Runtime support for GPU containers
+
+**Expected behavior:**
+- Script detects NVIDIA GPUs automatically
+- Cleans up any existing NVIDIA installations
+- Installs drivers and container runtime support
+- Configures Kubernetes for GPU scheduling
+- May require system reboot to complete installation
+
+### Verify Installation
+
+After installation (and potential reboot), verify GPU functionality:
+
+```bash
+# Check NVIDIA driver
+nvidia-smi
+
+# Check GPU nodes in Kubernetes
+kubectl describe nodes | grep nvidia.com/gpu
+
+# Check device plugin pods
+kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds
+
+# Test GPU container
+docker run --rm --gpus all nvidia/cuda:12.2-runtime-ubuntu20.04 nvidia-smi
+```
+
+### Usage Examples
+
+**Deploy GPU workload:**
+```bash
+# Create a simple GPU test pod
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-test
+spec:
+  restartPolicy: Never
+  containers:
+  - name: gpu-test
+    image: nvidia/cuda:12.2-runtime-ubuntu20.04
+    command: ["nvidia-smi"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+EOF
+
+# Check the results
+kubectl logs gpu-test
+```
+
+**Machine Learning example:**
+```bash
+# Deploy TensorFlow with GPU
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tensorflow-gpu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tensorflow-gpu
+  template:
+    metadata:
+      labels:
+        app: tensorflow-gpu
+    spec:
+      containers:
+      - name: tensorflow
+        image: tensorflow/tensorflow:latest-gpu
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+        command: ["python", "-c"]
+        args: ["import tensorflow as tf; print('GPUs:', tf.config.list_physical_devices('GPU'))"]
+EOF
+```
+
+**PyTorch example:**
+```bash
+# Deploy PyTorch with GPU
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pytorch-gpu
+spec:
+  restartPolicy: Never
+  containers:
+  - name: pytorch
+    image: pytorch/pytorch:latest
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+    command: ["python", "-c"]
+    args: ["import torch; print('CUDA available:', torch.cuda.is_available()); print('GPU count:', torch.cuda.device_count())"]
+EOF
+```
+
+### GPU Resource Management
+
+**Request specific GPU count:**
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: 2  # Request 2 GPUs
+```
+
+**GPU node selection:**
+```yaml
+nodeSelector:
+  accelerator: nvidia-tesla-k80  # Select specific GPU type
+```
+
+**GPU sharing (if supported):**
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: 0.5  # Share GPU (requires MIG or similar)
+```
+
+### Monitoring GPU Usage
+
+**Check GPU utilization:**
+```bash
+# On the node with GPUs
+nvidia-smi
+
+# Continuous monitoring
+watch -n 1 nvidia-smi
+```
+
+**Kubernetes GPU metrics:**
+```bash
+# Check GPU capacity and allocation
+kubectl describe nodes | grep -A 5 "Capacity:" | grep nvidia.com/gpu
+kubectl describe nodes | grep -A 5 "Allocatable:" | grep nvidia.com/gpu
+```
+
+### Troubleshooting NVIDIA
+
+**Driver issues:**
+```bash
+# Check driver installation
+nvidia-smi
+lsmod | grep nvidia
+
+# Check driver version
+cat /proc/driver/nvidia/version
+```
+
+**Container runtime issues:**
+```bash
+# Test container access
+docker run --rm --gpus all nvidia/cuda:12.2-runtime-ubuntu20.04 nvidia-smi
+
+# Check containerd configuration
+grep nvidia /etc/containerd/config.toml
+```
+
+**Kubernetes device plugin issues:**
+```bash
+# Check device plugin status
+kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds
+kubectl logs -n kube-system -l name=nvidia-device-plugin-ds
+
+# Check node GPU resources
+kubectl get nodes -o yaml | grep nvidia.com/gpu
+```
+
+**Pod scheduling issues:**
+```bash
+# Check pod events
+kubectl describe pod YOUR_GPU_POD
+
+# Check node GPU availability
+kubectl describe nodes | grep nvidia.com/gpu
+```
+
+**Common solutions:**
+- **Reboot required**: NVIDIA driver installation often requires reboot
+- **Containerd restart**: `sudo systemctl restart containerd`
+- **Device plugin restart**: `kubectl delete pods -n kube-system -l name=nvidia-device-plugin-ds`
+- **Check GPU compatibility**: Ensure GPU is supported by driver version
+
+### Important Notes
+
+**System requirements:**
+- **NVIDIA GPU**: Physical NVIDIA graphics card required
+- **Kernel headers**: Must match running kernel version
+- **Secure Boot**: May need to be disabled for driver installation
+- **Power management**: Ensure adequate power supply for GPU
+
+**Best practices:**
+- **Resource limits**: Always specify GPU resource limits
+- **Image compatibility**: Use NVIDIA-compatible container images
+- **Monitoring**: Monitor GPU utilization and temperature
+- **Updates**: Keep drivers updated for security and performance
+
+**Supported workloads:**
+- Machine Learning (TensorFlow, PyTorch, etc.)
+- AI inference services
+- CUDA applications
+- Video processing
+- Scientific computing
+- Cryptocurrency mining
