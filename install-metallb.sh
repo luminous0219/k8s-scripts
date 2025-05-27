@@ -141,16 +141,32 @@ get_ip_range() {
     echo ""
     
     info "You can specify the range in two formats:"
-    info "  1. CIDR notation: 192.168.1.240/28 (provides 16 IPs: .240-.255)"
-    info "  2. Range notation: 192.168.1.240-192.168.1.250 (provides 11 IPs)"
+    echo ""
+    
+    info "1. CIDR notation examples:"
+    info "   192.168.1.200/29    # Provides 8 IPs (.200-.207)"
+    info "   192.168.1.240/28    # Provides 16 IPs (.240-.255)"
+    info "   10.0.0.100/29       # Provides 8 IPs (.100-.107)"
+    info "   172.16.1.50/29      # Provides 8 IPs (.50-.57)"
+    echo ""
+    
+    info "2. Range notation examples:"
+    info "   192.168.1.200-192.168.1.210    # Provides 11 IPs"
+    info "   10.0.0.100-10.0.0.105          # Provides 6 IPs"
+    info "   172.16.1.50-172.16.1.60        # Provides 11 IPs"
     echo ""
     
     if [ -n "$NETWORK_BASE" ]; then
-        info "Suggested range based on your cluster: ${NETWORK_BASE}.240/28"
-    elif [ -n "$LOCAL_NETWORK_BASE" ]; then
-        info "Suggested range based on local network: ${LOCAL_NETWORK_BASE}.240/28"
+        info "Your cluster network appears to be: ${NETWORK_BASE}.x"
+        info "Choose a range within this subnet that's not used by:"
+        info "  • DHCP server (often .100-.199 or .50-.150)"
+        info "  • Static devices (routers, servers, printers)"
+        info "  • Other infrastructure (Proxmox, ESXi, etc.)"
     fi
     
+    echo ""
+    warning "IMPORTANT: Verify your chosen range is available!"
+    warning "Check your router/DHCP settings and ping test the IPs first."
     echo ""
     
     while true; do
