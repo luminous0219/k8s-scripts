@@ -32,6 +32,15 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts
 
 > **Note:** MetalLB provides LoadBalancer functionality for bare metal Kubernetes clusters. Run this after your cluster is set up.
 
+### ArgoCD GitOps Setup (Optional)
+
+**Install ArgoCD with MetalLB LoadBalancer:**
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-argocd.sh)"
+```
+
+> **Note:** ArgoCD provides GitOps functionality for continuous deployment. Requires MetalLB to be installed first.
+
 ### 🔒 Security Note for One-Liner Installation
 
 While the one-liner installation is convenient, for production environments consider:
@@ -59,6 +68,7 @@ While the one-liner installation is convenient, for production environments cons
 - **CNI Included** - Flannel CNI automatically configured
 - **One-Liner Installation** - No need to clone repository
 - **MetalLB Support** - Optional LoadBalancer functionality for bare metal clusters
+- **ArgoCD Integration** - Optional GitOps functionality with MetalLB LoadBalancer
 
 ## 🛠️ Installation
 
@@ -221,4 +231,173 @@ kubectl get l2advertisement -n metallb-system
 ```bash
 kubectl describe svc <service-name>
 kubectl logs -n metallb-system -l app=metallb
+```
+
+## 🚀 ArgoCD GitOps Setup
+
+ArgoCD provides GitOps functionality for continuous deployment, allowing you to manage applications declaratively through Git repositories.
+
+### Why ArgoCD?
+
+ArgoCD enables GitOps workflows by:
+- Automatically syncing applications from Git repositories
+- Providing a web UI for application management
+- Supporting multi-cluster deployments
+- Offering rollback and history tracking
+- Implementing security and RBAC controls
+
+### Prerequisites
+
+ArgoCD requires MetalLB to be installed first for LoadBalancer functionality:
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-metallb.sh)"
+```
+
+### Installation
+
+**One-liner installation:**
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-argocd.sh)"
+```
+
+### What the ArgoCD script does:
+
+1. **Checks prerequisites** - Verifies MetalLB is installed and running
+2. **Detects IP pools** - Shows available MetalLB IP address ranges
+3. **Interactive IP selection** - Prompts you to choose an IP for ArgoCD
+4. **Installs ArgoCD** - Deploys latest stable version
+5. **Configures LoadBalancer** - Exposes ArgoCD via MetalLB with your chosen IP
+6. **Retrieves admin password** - Gets the initial admin password
+7. **Optional sample app** - Creates a guestbook application for testing
+
+### IP Address Selection
+
+The script will show your MetalLB pools and help you choose an available IP:
+
+```
+Available MetalLB IP pools:
+  • 192.168.31.200/29
+
+Examples of valid IPs (choose one that's not already in use):
+  From 192.168.31.200/29: 192.168.31.201, 192.168.31.202, 192.168.31.203
+```
+
+### Access ArgoCD
+
+After installation, you can access ArgoCD at:
+- **URL**: `https://YOUR_CHOSEN_IP`
+- **Username**: `admin`
+- **Password**: Displayed during installation or retrieve with:
+  ```bash
+  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+  ```
+
+### Browser Security Warning
+
+ArgoCD uses a self-signed certificate, so your browser will show a security warning:
+1. Click **"Advanced"**
+2. Click **"Proceed to [IP address]"**
+3. Login with admin credentials
+
+### Sample Application
+
+The script can create a sample guestbook application to demonstrate ArgoCD:
+1. Login to ArgoCD UI
+2. Find the "guestbook" application
+3. Click **"Sync"** to deploy it
+4. Monitor the deployment progress
+
+### Creating Your Own Applications
+
+**Via ArgoCD UI:**
+1. Click **"+ New App"**
+2. Fill in application details:
+   - **Application Name**: Your app name
+   - **Project**: default
+   - **Repository URL**: Your Git repository
+   - **Path**: Path to Kubernetes manifests
+   - **Cluster URL**: https://kubernetes.default.svc
+   - **Namespace**: Target namespace
+3. Click **"Create"**
+4. Click **"Sync"** to deploy
+
+**Via kubectl:**
+```bash
+kubectl apply -f - <<EOF
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-username/your-repo.git
+    targetRevision: HEAD
+    path: k8s-manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: my-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+EOF
+```
+
+### Useful Commands
+
+**Check ArgoCD status:**
+```bash
+kubectl get pods -n argocd
+kubectl get svc -n argocd
+```
+
+**Get admin password:**
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
+**View applications:**
+```bash
+kubectl get applications -n argocd
+```
+
+**ArgoCD CLI (optional):**
+```bash
+# Install ArgoCD CLI
+curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+
+# Login via CLI
+argocd login YOUR_ARGOCD_IP --username admin --password YOUR_PASSWORD --insecure
+```
+
+### Troubleshooting ArgoCD
+
+**Can't access UI:**
+```bash
+# Check LoadBalancer service
+kubectl get svc argocd-server-loadbalancer -n argocd
+
+# Check if IP is assigned
+kubectl describe svc argocd-server-loadbalancer -n argocd
+```
+
+**Application sync issues:**
+```bash
+# Check application status
+kubectl describe application YOUR_APP_NAME -n argocd
+
+# View ArgoCD server logs
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server
+```
+
+**Reset admin password:**
+```bash
+# Delete the secret to regenerate
+kubectl delete secret argocd-initial-admin-secret -n argocd
+kubectl rollout restart deployment argocd-server -n argocd
 ```
