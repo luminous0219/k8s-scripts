@@ -268,6 +268,68 @@ kubectl describe svc <service-name>
 kubectl logs -n metallb-system -l app=metallb
 ```
 
+### MetalLB Port Configuration Issues
+
+**Common Issue: Speaker pods restarting or connectivity timeouts**
+
+If you see errors like:
+```
+Failed to join 192.168.31.11:7946: dial tcp 192.168.31.11:7946: i/o timeout
+partial join: expected=2 joined=0
+```
+
+This indicates that MetalLB speakers cannot communicate between nodes due to firewall blocking port 7946.
+
+**Solution: Use the MetalLB port fix script**
+
+**One-liner fix:**
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/fix-metallb-ports.sh)"
+```
+
+**Or run locally:**
+```bash
+# Download the script
+curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/fix-metallb-ports.sh -o fix-metallb-ports.sh
+chmod +x fix-metallb-ports.sh
+
+# Run the script (from master node)
+./fix-metallb-ports.sh
+```
+
+**What the port fix script does:**
+1. **Detects all nodes** - Gets node IPs from kubectl
+2. **Opens required ports** - Configures UFW to allow TCP/UDP 7946 on all nodes
+3. **Restarts speakers** - Refreshes MetalLB speaker pods to establish connections
+4. **Verifies status** - Checks that all speakers are running properly
+
+**Manual port configuration (if script fails):**
+
+On each node (master and workers), run:
+```bash
+sudo ufw allow 7946/tcp comment "MetalLB memberlist TCP"
+sudo ufw allow 7946/udp comment "MetalLB memberlist UDP"
+```
+
+Then restart MetalLB speakers:
+```bash
+kubectl delete pods -n metallb-system -l component=speaker
+```
+
+**Required ports for MetalLB:**
+- **TCP 7946**: MetalLB speaker memberlist communication
+- **UDP 7946**: MetalLB speaker memberlist communication
+
+**Verify the fix:**
+```bash
+# Check speaker logs for successful joins
+kubectl logs -n metallb-system -l component=speaker --tail=20
+
+# Should see messages like:
+# "node event - forcing sync" node addr="192.168.31.11" node event="NodeJoin"
+# No more "Failed to join" or "i/o timeout" errors
+```
+
 ## 🚀 ArgoCD GitOps Setup
 
 ArgoCD provides GitOps functionality for continuous deployment, allowing you to manage applications declaratively through Git repositories.
