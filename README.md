@@ -50,6 +50,15 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts
 
 > **Note:** ArgoCD provides GitOps functionality for continuous deployment. Requires MetalLB to be installed first.
 
+### Autostart Verification (Recommended)
+
+**Verify and fix autostart for all services:**
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/verify-autostart.sh)"
+```
+
+> **Note:** Ensures all Kubernetes services, MetalLB, ArgoCD, and NVIDIA components start automatically after system reboot.
+
 ### 🔒 Security Note for One-Liner Installation
 
 While the one-liner installation is convenient, for production environments consider:
@@ -664,3 +673,204 @@ kubectl describe nodes | grep nvidia.com/gpu
 - Video processing
 - Scientific computing
 - Cryptocurrency mining
+
+## 🔄 Autostart Verification
+
+Ensuring all Kubernetes services start automatically after system reboot is critical for production environments. This section covers autostart verification and configuration.
+
+### Why Autostart Verification?
+
+System reboots can cause issues if services don't start automatically:
+- **Kubernetes cluster becomes unavailable** - Core services fail to start
+- **Applications don't restart** - Pods remain in pending state
+- **Load balancers fail** - MetalLB services become inaccessible
+- **GitOps stops working** - ArgoCD becomes unavailable
+- **GPU workloads fail** - NVIDIA device plugin doesn't start
+
+### Autostart Verification Script
+
+**One-liner verification:**
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/verify-autostart.sh)"
+```
+
+### What the Autostart Script Does
+
+1. **Verifies Core Services** - Checks kubelet and containerd autostart
+2. **Creates Startup Services** - Adds custom systemd services for reliability
+3. **Checks Kubernetes Apps** - Verifies MetalLB, ArgoCD, NVIDIA plugin status
+4. **Creates Recovery Scripts** - Adds comprehensive startup check scripts
+5. **Enables All Services** - Ensures everything starts automatically
+6. **Provides Status Report** - Shows current service status
+
+### Services Configured for Autostart
+
+**Core Kubernetes Services:**
+- `containerd` - Container runtime
+- `kubelet` - Kubernetes node agent
+- `kubernetes-startup` - Custom startup service
+- `k8s-startup-check` - Comprehensive check service
+
+**Kubernetes Applications (Pods):**
+- All system pods (kube-system namespace)
+- MetalLB load balancer (if installed)
+- ArgoCD GitOps platform (if installed)
+- NVIDIA device plugin (if installed)
+- All user applications and deployments
+
+### Manual Verification Commands
+
+**Check service status:**
+```bash
+# Check if services are enabled for autostart
+sudo systemctl is-enabled kubelet containerd
+
+# Check if services are currently running
+sudo systemctl is-active kubelet containerd
+
+# Check all Kubernetes services
+sudo systemctl status kubelet containerd kubernetes-startup k8s-startup-check
+```
+
+**Check Kubernetes cluster:**
+```bash
+# Check cluster accessibility
+kubectl cluster-info
+
+# Check node status
+kubectl get nodes
+
+# Check all pods
+kubectl get pods --all-namespaces
+
+# Check specific applications
+kubectl get pods -n metallb-system  # MetalLB
+kubectl get pods -n argocd          # ArgoCD
+kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds  # NVIDIA
+```
+
+### Testing Autostart
+
+**Test with system reboot:**
+```bash
+# Reboot the system
+sudo reboot
+
+# After reboot, wait 2-3 minutes, then check:
+kubectl get nodes
+kubectl get pods --all-namespaces
+```
+
+**Expected behavior after reboot:**
+1. **System boots normally** (1-2 minutes)
+2. **Core services start** - containerd and kubelet start automatically
+3. **Kubernetes cluster becomes ready** - nodes show as Ready
+4. **All pods restart** - system and application pods start running
+5. **Applications become accessible** - MetalLB assigns IPs, ArgoCD UI available
+
+### Troubleshooting Autostart Issues
+
+**Services not starting:**
+```bash
+# Check service logs
+sudo journalctl -u kubelet -f
+sudo journalctl -u containerd -f
+sudo journalctl -u kubernetes-startup -f
+
+# Manually start services
+sudo systemctl start containerd
+sudo systemctl start kubelet
+
+# Check service dependencies
+sudo systemctl list-dependencies kubelet
+```
+
+**Kubernetes cluster not accessible:**
+```bash
+# Check if kubeconfig exists
+ls -la ~/.kube/config
+
+# Check cluster status
+kubectl cluster-info dump
+
+# Check node status
+kubectl describe nodes
+```
+
+**Pods not starting:**
+```bash
+# Check pod events
+kubectl get events --all-namespaces --sort-by='.lastTimestamp'
+
+# Check specific pod logs
+kubectl logs -n kube-system <pod-name>
+
+# Restart failed pods
+kubectl delete pods --all-namespaces --field-selector=status.phase=Failed
+```
+
+**MetalLB not working:**
+```bash
+# Check MetalLB pods
+kubectl get pods -n metallb-system
+
+# Check MetalLB configuration
+kubectl get ipaddresspool -n metallb-system
+kubectl get l2advertisement -n metallb-system
+
+# Restart MetalLB
+kubectl rollout restart daemonset/speaker -n metallb-system
+kubectl rollout restart deployment/controller -n metallb-system
+```
+
+**ArgoCD not accessible:**
+```bash
+# Check ArgoCD pods
+kubectl get pods -n argocd
+
+# Check ArgoCD service
+kubectl get svc -n argocd
+
+# Get ArgoCD admin password
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
+### Best Practices for Autostart
+
+**Regular verification:**
+- Run autostart verification script monthly
+- Test reboot scenarios in development environments
+- Monitor service status with monitoring tools
+
+**Backup configurations:**
+- Backup `/etc/systemd/system/` directory
+- Keep copies of Kubernetes manifests
+- Document custom configurations
+
+**Monitoring:**
+- Set up alerts for service failures
+- Monitor cluster health continuously
+- Use tools like Prometheus and Grafana
+
+### Recovery Procedures
+
+**If autostart fails completely:**
+```bash
+# Manual recovery steps
+sudo systemctl start containerd
+sudo systemctl start kubelet
+
+# Wait for cluster to be ready
+kubectl wait --for=condition=Ready node --all --timeout=300s
+
+# Check and restart failed pods
+kubectl get pods --all-namespaces | grep -v Running
+```
+
+**Emergency cluster recovery:**
+```bash
+# Reset and reinitialize (DESTRUCTIVE - last resort)
+sudo kubeadm reset
+sudo systemctl restart containerd kubelet
+# Re-run master installation script
+```

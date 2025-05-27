@@ -143,6 +143,51 @@ kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/
 log "Waiting for node to be ready..."
 kubectl wait --for=condition=Ready node --all --timeout=300s
 
+# Ensure all services are enabled for autostart
+ensure_autostart_services() {
+    log "Ensuring all services are enabled for autostart after reboot..."
+    
+    # Core Kubernetes services
+    systemctl enable kubelet
+    systemctl enable containerd
+    
+    # Verify services are enabled
+    local services=("kubelet" "containerd")
+    for service in "${services[@]}"; do
+        if systemctl is-enabled --quiet "$service"; then
+            success "$service is enabled for autostart"
+        else
+            warning "$service is not enabled, attempting to enable..."
+            systemctl enable "$service"
+        fi
+    done
+    
+    # Create a systemd service to ensure Kubernetes starts properly after reboot
+    cat <<EOF > /etc/systemd/system/kubernetes-startup.service
+[Unit]
+Description=Kubernetes Startup Service
+After=network.target containerd.service kubelet.service
+Wants=containerd.service kubelet.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'sleep 30 && systemctl restart kubelet'
+RemainAfterExit=yes
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Enable the startup service
+    systemctl daemon-reload
+    systemctl enable kubernetes-startup.service
+    
+    success "All services configured for autostart"
+}
+
+ensure_autostart_services
+
 # Display cluster information
 log "Displaying cluster information..."
 kubectl get nodes
