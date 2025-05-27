@@ -101,14 +101,33 @@ create_kubernetes_startup_service() {
     cat <<EOF > /etc/systemd/system/kubernetes-startup.service
 [Unit]
 Description=Kubernetes Startup Service
-After=network.target containerd.service kubelet.service
-Wants=containerd.service kubelet.service
+After=network-online.target containerd.service
+Wants=containerd.service network-online.target
+Before=k8s-startup-check.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c 'sleep 30 && systemctl restart kubelet && sleep 10'
+ExecStart=/bin/bash -c '
+    # Wait for containerd to be ready
+    sleep 15
+    systemctl is-active --quiet containerd || systemctl start containerd
+    sleep 10
+    
+    # Start kubelet
+    systemctl is-active --quiet kubelet || systemctl start kubelet
+    sleep 20
+    
+    # For master nodes, ensure static pods directory exists
+    if [ -d /etc/kubernetes/manifests ]; then
+        echo "Master node detected, ensuring static pods are ready..."
+        # Restart kubelet to ensure it picks up static pods
+        systemctl restart kubelet
+        sleep 30
+    fi
+'
 RemainAfterExit=yes
 User=root
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target
@@ -223,30 +242,84 @@ create_comprehensive_startup_script() {
 # Kubernetes Comprehensive Startup Check
 # This script runs at boot to ensure all services are properly started
 
-sleep 60  # Wait for system to fully boot
+# Log all output
+exec > >(tee -a /var/log/k8s-startup-check.log)
+exec 2>&1
 
-# Restart core services if needed
-systemctl is-active --quiet containerd || systemctl restart containerd
-sleep 10
-systemctl is-active --quiet kubelet || systemctl restart kubelet
+echo "=== Kubernetes startup check started at \$(date) ==="
+
+# Wait for system to fully boot
+echo "Waiting for system to stabilize..."
+sleep 90
+
+# Ensure containerd is running first
+echo "Checking containerd service..."
+for i in {1..10}; do
+    if systemctl is-active --quiet containerd; then
+        echo "containerd is running"
+        break
+    else
+        echo "Starting containerd (attempt \$i)..."
+        systemctl start containerd
+        sleep 10
+    fi
+done
+
+# Wait a bit more for containerd to be fully ready
 sleep 20
 
-# Check if kubectl is available and cluster is accessible
-if command -v kubectl &> /dev/null; then
-    # Wait for cluster to be ready
-    for i in {1..30}; do
-        if kubectl cluster-info &> /dev/null; then
-            echo "Kubernetes cluster is accessible"
+# Ensure kubelet is running
+echo "Checking kubelet service..."
+for i in {1..10}; do
+    if systemctl is-active --quiet kubelet; then
+        echo "kubelet is running"
+        break
+    else
+        echo "Starting kubelet (attempt \$i)..."
+        systemctl start kubelet
+        sleep 15
+    fi
+done
+
+# For master nodes, wait for control plane to be ready
+if [ -f /etc/kubernetes/admin.conf ]; then
+    echo "Master node detected, waiting for control plane..."
+    
+    # Wait for API server to be accessible
+    for i in {1..60}; do
+        if kubectl --kubeconfig=/etc/kubernetes/admin.conf cluster-info &> /dev/null; then
+            echo "Kubernetes API server is accessible"
             break
+        else
+            echo "Waiting for API server (attempt \$i/60)..."
+            
+            # Check if static pods are running
+            if [ \$i -eq 30 ]; then
+                echo "Checking static pod manifests..."
+                ls -la /etc/kubernetes/manifests/ || echo "No static pod manifests found"
+                
+                echo "Checking kubelet logs..."
+                journalctl -u kubelet --no-pager -l --since "5 minutes ago" | tail -20
+            fi
+            
+            sleep 10
         fi
-        sleep 10
     done
     
-    # Restart any failed pods
-    kubectl get pods --all-namespaces --field-selector=status.phase=Failed -o name | xargs -r kubectl delete
+    # Wait for nodes to be ready
+    echo "Waiting for nodes to be ready..."
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf wait --for=condition=Ready node --all --timeout=300s || echo "Timeout waiting for nodes"
+    
+    # Restart any failed system pods
+    echo "Checking for failed pods..."
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods --all-namespaces --field-selector=status.phase=Failed -o name | xargs -r kubectl --kubeconfig=/etc/kubernetes/admin.conf delete
+    
+    # Check critical system pods
+    echo "Checking critical system pods..."
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system | grep -E "(kube-apiserver|kube-controller-manager|kube-scheduler|etcd)" || echo "Some control plane pods may not be running"
 fi
 
-echo "Kubernetes startup check completed at \$(date)"
+echo "=== Kubernetes startup check completed at \$(date) ==="
 EOF
 
     chmod +x /usr/local/bin/k8s-startup-check.sh
@@ -255,14 +328,15 @@ EOF
     cat <<EOF > /etc/systemd/system/k8s-startup-check.service
 [Unit]
 Description=Kubernetes Comprehensive Startup Check
-After=network.target multi-user.target
-Wants=network.target
+After=network-online.target multi-user.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/k8s-startup-check.sh
 RemainAfterExit=yes
 User=root
+TimeoutStartSec=900
 
 [Install]
 WantedBy=multi-user.target

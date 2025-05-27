@@ -59,6 +59,15 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-sc
 
 > **Note:** Ensures all Kubernetes services, MetalLB, ArgoCD, and NVIDIA components start automatically after system reboot.
 
+### Fix Startup Issues (Emergency)
+
+**If Kubernetes fails to start after reboot:**
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/fix-k8s-startup.sh)"
+```
+
+> **Note:** Run this immediately when you get "connection refused" errors after reboot. Diagnoses and fixes common startup issues.
+
 ### 🔒 Security Note for One-Liner Installation
 
 While the one-liner installation is convenient, for production environments consider:
