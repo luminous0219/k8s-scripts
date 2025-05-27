@@ -23,6 +23,15 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-sc
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-single-node.sh)"
 ```
 
+### MetalLB Load Balancer Setup (Optional)
+
+**Install MetalLB for LoadBalancer services:**
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-metallb.sh)"
+```
+
+> **Note:** MetalLB provides LoadBalancer functionality for bare metal Kubernetes clusters. Run this after your cluster is set up.
+
 ### 🔒 Security Note for One-Liner Installation
 
 While the one-liner installation is convenient, for production environments consider:
@@ -49,6 +58,7 @@ While the one-liner installation is convenient, for production environments cons
 - **Error Handling** - Robust validation and error recovery
 - **CNI Included** - Flannel CNI automatically configured
 - **One-Liner Installation** - No need to clone repository
+- **MetalLB Support** - Optional LoadBalancer functionality for bare metal clusters
 
 ## 🛠️ Installation
 
@@ -62,38 +72,6 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-sc
 **Install Worker Nodes:**
 ```bash
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-worker.sh)"
-```
-
-### Method 2: Download and Execute
-
-If you prefer to download the scripts first:
-
-```bash
-# Download master script
-curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-master.sh -o install-k8s-master.sh
-chmod +x install-k8s-master.sh
-sudo ./install-k8s-master.sh
-
-# Download worker script
-curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-worker.sh -o install-k8s-worker.sh
-chmod +x install-k8s-worker.sh
-sudo ./install-k8s-worker.sh
-```
-
-### Method 3: Git Clone (Traditional)
-
-```bash
-# Clone this repository
-git clone https://github.com/luminous0219/k8s-scripts.git
-cd k8s-scripts
-
-# Make scripts executable
-chmod +x install-k8s-master.sh
-chmod +x install-k8s-worker.sh
-
-# Run scripts
-sudo ./install-k8s-master.sh
-sudo ./install-k8s-worker.sh
 ```
 
 ### Installation Process
@@ -163,3 +141,84 @@ kubectl get nodes
 ```
 
 **That's it! Your Kubernetes 1.33 cluster is ready! 🎉**
+
+## 🌐 MetalLB Load Balancer Setup
+
+MetalLB provides LoadBalancer functionality for bare metal Kubernetes clusters, allowing you to expose services with external IPs.
+
+### Why MetalLB?
+
+In cloud environments, LoadBalancer services automatically get external IPs. On bare metal, you need MetalLB to:
+- Assign external IPs to LoadBalancer services
+- Make services accessible from outside the cluster
+- Enable true load balancing for your applications
+
+### Installation
+
+**One-liner installation:**
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-metallb.sh)"
+```
+
+### What the MetalLB script does:
+
+1. **Detects your network** - Automatically identifies your cluster's network range
+2. **Interactive configuration** - Prompts you to specify IP address range
+3. **Installs MetalLB v0.14.9** - Latest stable version
+4. **Configures IP pool** - Sets up address pool and L2 advertisement
+5. **Creates test service** - Verifies functionality with nginx deployment
+6. **Validates setup** - Ensures external IP assignment works
+
+### IP Range Configuration
+
+The script will ask you to specify an IP range in one of these formats:
+
+**CIDR Notation:**
+```
+192.168.1.240/28    # Provides 16 IPs (.240-.255)
+192.168.1.200/29    # Provides 8 IPs (.200-.207)
+```
+
+**Range Notation:**
+```
+192.168.1.240-192.168.1.250    # Provides 11 IPs
+192.168.1.100-192.168.1.110    # Provides 11 IPs
+```
+
+### Important Considerations:
+
+- **Available IPs**: Choose IPs not used by DHCP or static assignments
+- **Network subnet**: IPs must be in your network's subnet
+- **Firewall**: Ensure firewall allows traffic to assigned IPs
+- **Router**: IPs should be routable within your network
+
+### Usage Examples:
+
+**Expose a deployment:**
+```bash
+kubectl create deployment nginx --image=nginx
+kubectl expose deployment nginx --type=LoadBalancer --port=80
+kubectl get svc nginx  # Check assigned external IP
+```
+
+**Access your service:**
+```bash
+# Get the external IP
+EXTERNAL_IP=$(kubectl get svc nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+curl http://$EXTERNAL_IP
+```
+
+### Troubleshooting MetalLB:
+
+**Check MetalLB status:**
+```bash
+kubectl get pods -n metallb-system
+kubectl get ipaddresspool -n metallb-system
+kubectl get l2advertisement -n metallb-system
+```
+
+**Service stuck in pending:**
+```bash
+kubectl describe svc <service-name>
+kubectl logs -n metallb-system -l app=metallb
+```
