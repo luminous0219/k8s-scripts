@@ -8,22 +8,20 @@ This repository contains automated installation scripts for setting up a Kuberne
 
 **Master Node Installation:**
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/yourusername/k8s-installation-scripts/main/install-k8s-master.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-master.sh)"
 ```
 
 **Worker Node Installation:**
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/yourusername/k8s-installation-scripts/main/install-k8s-worker.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-worker.sh)"
 ```
 
 ### Single-Node Cluster Setup (Development/Testing)
 
 **Complete cluster on one machine:**
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/yourusername/k8s-installation-scripts/main/install-k8s-single-node.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-single-node.sh)"
 ```
-
-> **Note:** Replace `yourusername` with your actual GitHub username when you publish the repository.
 
 ### 🔒 Security Note for One-Liner Installation
 
@@ -31,12 +29,12 @@ While the one-liner installation is convenient, for production environments cons
 
 1. **Review the script first**: Download and inspect before running
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/yourusername/k8s-installation-scripts/main/install-k8s-master.sh
+   curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-master.sh
    ```
 
 2. **Use specific commit hash** for reproducible installations:
    ```bash
-   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/yourusername/k8s-installation-scripts/COMMIT_HASH/install-k8s-master.sh)"
+   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/COMMIT_HASH/install-k8s-master.sh)"
    ```
 
 3. **Verify script integrity** using checksums (if provided)
@@ -58,12 +56,12 @@ While the one-liner installation is convenient, for production environments cons
 
 **Install Master Node:**
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/yourusername/k8s-installation-scripts/main/install-k8s-master.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-master.sh)"
 ```
 
 **Install Worker Nodes:**
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/yourusername/k8s-installation-scripts/main/install-k8s-worker.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-worker.sh)"
 ```
 
 ### Method 2: Download and Execute
@@ -72,12 +70,12 @@ If you prefer to download the scripts first:
 
 ```bash
 # Download master script
-curl -fsSL https://raw.githubusercontent.com/yourusername/k8s-installation-scripts/main/install-k8s-master.sh -o install-k8s-master.sh
+curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-master.sh -o install-k8s-master.sh
 chmod +x install-k8s-master.sh
 sudo ./install-k8s-master.sh
 
 # Download worker script
-curl -fsSL https://raw.githubusercontent.com/yourusername/k8s-installation-scripts/main/install-k8s-worker.sh -o install-k8s-worker.sh
+curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-worker.sh -o install-k8s-worker.sh
 chmod +x install-k8s-worker.sh
 sudo ./install-k8s-worker.sh
 ```
@@ -86,8 +84,8 @@ sudo ./install-k8s-worker.sh
 
 ```bash
 # Clone this repository
-git clone https://github.com/yourusername/k8s-installation-scripts.git
-cd k8s-installation-scripts
+git clone https://github.com/luminous0219/k8s-scripts.git
+cd k8s-scripts
 
 # Make scripts executable
 chmod +x install-k8s-master.sh
@@ -141,7 +139,7 @@ Here's how to set up a complete 2-node cluster using the one-liner approach:
 ### Step 1: Set up Master Node
 On your master node (e.g., `192.168.1.10`):
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-installation-scripts/main/install-k8s-master.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-master.sh)"
 ```
 
 ### Step 2: Get Join Command
@@ -153,7 +151,7 @@ cat /tmp/kubeadm-join-command.txt
 ### Step 3: Set up Worker Node
 On your worker node (e.g., `192.168.1.11`):
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-installation-scripts/main/install-k8s-worker.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/install-k8s-worker.sh)"
 ```
 When prompted, paste the join command from Step 2.
 
