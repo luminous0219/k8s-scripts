@@ -59,6 +59,13 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-sc
 
 > **Note:** Automatically extends the root partition and filesystem to use all available disk space. Essential for Kubernetes worker nodes that need more storage for containers and images.
 
+**LVM-only extension (when partition is already correct size):**
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/extend-lvm-only.sh)"
+```
+
+> **Note:** Use this when your disk partition is already the right size but your LVM logical volume hasn't been extended to use all available space. Common after VM disk expansion.
+
 ### Autostart Verification (Recommended)
 
 **Verify and fix autostart for all services:**
