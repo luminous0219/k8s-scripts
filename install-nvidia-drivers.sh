@@ -94,6 +94,54 @@ detect_nvidia_gpu() {
     done
 }
 
+# Check Secure Boot status
+check_secure_boot() {
+    log "Checking Secure Boot status..."
+    
+    if command -v mokutil &> /dev/null; then
+        SECURE_BOOT_STATUS=$(mokutil --sb-state 2>/dev/null || echo "unknown")
+        info "Secure Boot status: $SECURE_BOOT_STATUS"
+        
+        if echo "$SECURE_BOOT_STATUS" | grep -q "SecureBoot enabled"; then
+            SECURE_BOOT_ENABLED=true
+            warning "⚠️  SECURE BOOT IS ENABLED"
+            warning "This will prevent NVIDIA drivers from loading properly!"
+            echo ""
+            highlight "IMPORTANT: You must disable Secure Boot before proceeding"
+            highlight "Steps to disable Secure Boot:"
+            highlight "1. Reboot and enter BIOS/UEFI settings (usually F2, F12, or DEL during boot)"
+            highlight "2. Navigate to Security or Boot settings"
+            highlight "3. Find 'Secure Boot' option and set it to 'Disabled'"
+            highlight "4. Save settings and exit BIOS"
+            highlight "5. Boot back into the system"
+            echo ""
+            
+            echo -n "Have you already disabled Secure Boot? (y/N): "
+            read -r SECURE_BOOT_DISABLED
+            
+            if [[ ! $SECURE_BOOT_DISABLED =~ ^[Yy]$ ]]; then
+                error "Please disable Secure Boot first, then run this script again"
+                echo ""
+                info "After disabling Secure Boot and rebooting:"
+                info "1. Run this installation script again"
+                info "2. Or use the quick fix command:"
+                info "   curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/fix-nvidia-drivers.sh | sudo bash"
+                exit 1
+            else
+                warning "Secure Boot appears enabled but you indicated it's disabled"
+                warning "The installation may fail - you can use the fix script if needed"
+            fi
+        else
+            success "Secure Boot is disabled - proceeding with installation"
+            SECURE_BOOT_ENABLED=false
+        fi
+    else
+        info "Cannot check Secure Boot status (mokutil not available)"
+        info "If installation fails, Secure Boot may need to be disabled"
+        SECURE_BOOT_ENABLED=false
+    fi
+}
+
 # Check if Kubernetes is installed
 check_kubernetes() {
     log "Checking Kubernetes installation..."
@@ -167,7 +215,8 @@ install_prerequisites() {
         curl \
         gnupg \
         ca-certificates \
-        software-properties-common
+        software-properties-common \
+        mokutil
     
     success "Prerequisites installed"
 }
@@ -596,6 +645,20 @@ display_post_install_info() {
         echo ""
         warning "After reboot, verify with: nvidia-smi"
         warning "Or run the verification script: sudo /root/verify-nvidia-post-reboot.sh"
+        echo ""
+        
+        if [ "$SECURE_BOOT_ENABLED" = true ]; then
+            highlight "🔒 SECURE BOOT DETECTED"
+            highlight "If NVIDIA drivers don't work after reboot:"
+            highlight "1. Disable Secure Boot in BIOS/UEFI settings"
+            highlight "2. Reboot the system"
+            highlight "3. Run the fix command:"
+            highlight "   curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/fix-nvidia-drivers.sh | sudo bash"
+            echo ""
+        else
+            info "If NVIDIA drivers don't work after reboot, run the fix command:"
+            info "curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/fix-nvidia-drivers.sh | sudo bash"
+        fi
         
         if [ "$K8S_AVAILABLE" = false ]; then
             echo ""
@@ -609,6 +672,23 @@ display_post_install_info() {
         fi
     else
         success "✅ Installation complete - no reboot required"
+        
+        # Test NVIDIA immediately if no reboot required
+        echo ""
+        info "Testing NVIDIA driver..."
+        if nvidia-smi &> /dev/null; then
+            success "NVIDIA driver is working immediately!"
+        else
+            warning "NVIDIA driver test failed"
+            if [ "$SECURE_BOOT_ENABLED" = true ]; then
+                warning "This is likely due to Secure Boot being enabled"
+                warning "Disable Secure Boot and run the fix command:"
+                warning "curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/fix-nvidia-drivers.sh | sudo bash"
+            else
+                warning "Run the fix command to resolve driver issues:"
+                warning "curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/fix-nvidia-drivers.sh | sudo bash"
+            fi
+        fi
         
         if [ "$K8S_AVAILABLE" = false ]; then
             echo ""
@@ -803,7 +883,17 @@ else
     error "❌ NVIDIA driver verification failed"
     error "The system is accessible but NVIDIA drivers need attention"
     echo ""
-    info "Recovery options:"
+    highlight "🔧 QUICK FIX COMMAND:"
+    highlight "curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/fix-nvidia-drivers.sh | sudo bash"
+    echo ""
+    info "This command will:"
+    info "• Diagnose the exact issue"
+    info "• Check Secure Boot status"
+    info "• Rebuild NVIDIA modules if needed"
+    info "• Load kernel modules"
+    info "• Test functionality"
+    echo ""
+    info "Manual recovery options:"
     info "1. Check secure boot: mokutil --sb-state"
     info "2. Reinstall drivers: sudo apt install --reinstall nvidia-driver-550"
     info "3. Check for kernel updates: sudo apt update && sudo apt upgrade"
@@ -838,6 +928,7 @@ main() {
     check_os
     detect_nvidia_gpu
     check_kubernetes
+    check_secure_boot
     
     # Installation process
     cleanup_existing
