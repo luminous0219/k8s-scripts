@@ -50,6 +50,15 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts
 
 > **Note:** ArgoCD provides GitOps functionality for continuous deployment. Requires MetalLB to be installed first.
 
+### Storage Extension (Recommended)
+
+**Extend disk storage to use all available space:**
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/extend-storage.sh)"
+```
+
+> **Note:** Automatically extends the root partition and filesystem to use all available disk space. Essential for Kubernetes worker nodes that need more storage for containers and images.
+
 ### Autostart Verification (Recommended)
 
 **Verify and fix autostart for all services:**
@@ -104,6 +113,7 @@ While the one-liner installation is convenient, for production environments cons
 - **NVIDIA GPU Support** - Optional GPU drivers and Kubernetes device plugin
 - **MetalLB Support** - Optional LoadBalancer functionality for bare metal clusters
 - **ArgoCD Integration** - Optional GitOps functionality with MetalLB LoadBalancer
+- **Storage Extension** - Automatic disk space extension for worker nodes
 
 ## 🛠️ Installation
 
@@ -751,6 +761,224 @@ kubectl describe nodes | grep nvidia.com/gpu
 - Video processing
 - Scientific computing
 - Cryptocurrency mining
+
+## 💾 Storage Extension
+
+Storage extension is essential for Kubernetes worker nodes to ensure adequate space for container images, logs, and persistent volumes. This script automatically extends the root partition to use all available disk space.
+
+### Why Storage Extension?
+
+Kubernetes worker nodes often run out of storage due to:
+- **Container images** - Large ML/AI images can consume significant space
+- **Container logs** - Application logs accumulate over time
+- **Persistent volumes** - StatefulSets and databases need storage
+- **Image layers** - Docker/containerd cache layers consume space
+- **System updates** - OS and package updates require additional space
+
+### When to Use Storage Extension
+
+**Common scenarios:**
+- **VM disk expansion** - After increasing VM disk size in hypervisor
+- **Cloud instance resize** - After upgrading to larger instance type
+- **Initial setup** - When VM was created with minimal disk allocation
+- **Storage alerts** - When monitoring shows low disk space
+- **Before large deployments** - Prior to deploying storage-intensive applications
+
+### Prerequisites
+
+Storage extension works with:
+- **LVM-based systems** - Ubuntu 20.04+ with default LVM setup
+- **GPT partition tables** - Modern partitioning scheme
+- **Ext4/XFS filesystems** - Standard Linux filesystems
+- **Available unallocated space** - Disk must have free space to extend
+
+### Installation
+
+**One-liner storage extension:**
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/luminous0219/k8s-scripts/main/extend-storage.sh)"
+```
+
+### What the Storage Extension Script Does
+
+1. **Detects Disk Layout** - Automatically identifies root device and LVM configuration
+2. **Checks Available Space** - Calculates unallocated disk space
+3. **Creates Backups** - Backs up partition table and LVM configuration
+4. **Extends Partition** - Uses fdisk to recreate partition with maximum size
+5. **Resizes LVM Components** - Extends physical volume and logical volume
+6. **Grows Filesystem** - Extends ext4/XFS filesystem to use new space
+7. **Restarts Services** - Restarts containerd and kubelet if needed
+8. **Verifies Extension** - Confirms successful storage expansion
+
+### Installation Process
+
+**What happens during extension:**
+- **Safety checks** - Verifies system compatibility and available space
+- **Backup creation** - Saves current configuration for recovery
+- **Partition modification** - Deletes and recreates partition to use all space
+- **LVM extension** - Resizes physical volume and logical volume
+- **Filesystem growth** - Extends filesystem to use new space
+- **Service restart** - Ensures Kubernetes services recognize new storage
+
+**Expected behavior:**
+- Script shows current and projected disk usage
+- Prompts for confirmation before making changes
+- Creates timestamped backup in `/root/storage-extension-backup-*`
+- Displays before/after storage comparison
+- Restarts Kubernetes services automatically
+
+### Verify Extension
+
+After storage extension, verify the results:
+
+```bash
+# Check filesystem usage
+df -h /
+
+# Check disk layout
+lsblk
+
+# Check LVM status (if applicable)
+pvdisplay
+lvdisplay
+
+# Check containerd storage
+df -h /var/lib/containerd
+
+# Verify Kubernetes services
+systemctl status kubelet containerd
+```
+
+### Usage Examples
+
+**Before extension:**
+```bash
+# Check current disk usage
+df -h /
+# Filesystem      Size  Used Avail Use% Mounted on
+# /dev/mapper/ubuntu--vg-ubuntu--lv   18G  4.6G   12G  28% /
+
+# Check disk layout
+fdisk -l /dev/sda
+# Disk /dev/sda: 50 GiB, 53687091200 bytes
+# Device       Start      End  Sectors  Size Type
+# /dev/sda3  3719168 41940991 38221824 18.2G Linux filesystem
+```
+
+**After extension:**
+```bash
+# Check new disk usage
+df -h /
+# Filesystem      Size  Used Avail Use% Mounted on
+# /dev/mapper/ubuntu--vg-ubuntu--lv   48G  4.6G   41G  10% /
+
+# Check new disk layout
+fdisk -l /dev/sda
+# Disk /dev/sda: 50 GiB, 53687091200 bytes
+# Device       Start       End   Sectors  Size Type
+# /dev/sda3  3719168 104855551 101136384 48.2G Linux filesystem
+```
+
+### Storage Management Best Practices
+
+**Monitor disk usage:**
+```bash
+# Regular monitoring
+df -h /
+du -sh /var/lib/containerd
+du -sh /var/log
+
+# Set up alerts (example with cron)
+echo "0 */6 * * * root df -h / | awk 'NR==2{if(\$5+0 > 80) print \"Disk usage high: \" \$5}' | mail -s \"Disk Alert\" admin@example.com" >> /etc/crontab
+```
+
+**Clean up storage:**
+```bash
+# Remove unused container images
+docker system prune -a
+
+# Clean up old logs
+journalctl --vacuum-time=7d
+
+# Remove old kernels (Ubuntu)
+sudo apt autoremove --purge
+
+# Clean package cache
+sudo apt clean
+```
+
+**Prevent storage issues:**
+```bash
+# Configure log rotation
+sudo logrotate -f /etc/logrotate.conf
+
+# Set containerd garbage collection
+# Edit /etc/containerd/config.toml
+[plugins."io.containerd.gc.v1.scheduler"]
+  deletion_threshold = 0
+  mutation_threshold = 100
+  pause_threshold = 0.02
+  schedule_delay = "0s"
+  startup_delay = "100ms"
+```
+
+### Troubleshooting Storage Extension
+
+**Extension fails:**
+```bash
+# Check backup location
+ls -la /root/storage-extension-backup-*
+
+# Restore partition table if needed
+sudo sfdisk /dev/sda < /root/storage-extension-backup-*/partition-table.sfdisk
+
+# Check for errors
+dmesg | grep -i error
+journalctl -u kubelet -f
+```
+
+**Services don't restart:**
+```bash
+# Manually restart services
+sudo systemctl restart containerd
+sudo systemctl restart kubelet
+
+# Check service status
+systemctl status containerd kubelet
+```
+
+**LVM issues:**
+```bash
+# Check LVM status
+pvdisplay
+vgdisplay
+lvdisplay
+
+# Scan for changes
+pvscan
+vgscan
+lvscan
+```
+
+### Important Notes
+
+**Safety considerations:**
+- **Backup important data** before running the script
+- **Test in development** environment first
+- **Verify free space** exists on the disk
+- **Check system load** - avoid during high I/O operations
+
+**Limitations:**
+- **LVM required** - Script designed for LVM-based systems
+- **Single partition** - Extends the last partition only
+- **No shrinking** - Cannot reduce partition size
+- **Filesystem support** - Limited to ext2/3/4 and XFS
+
+**Best practices:**
+- **Run during maintenance** windows when possible
+- **Monitor during extension** for any issues
+- **Keep backups** until verified working
+- **Document changes** for future reference
 
 ## 🔄 Autostart Verification
 
