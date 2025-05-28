@@ -237,24 +237,114 @@ install_container_toolkit() {
 configure_containerd() {
     log "Configuring containerd for NVIDIA support..."
     
+    # Backup current containerd config
+    if [ -f /etc/containerd/config.toml ]; then
+        cp /etc/containerd/config.toml /etc/containerd/config.toml.backup.$(date +%s)
+        info "Backed up existing containerd config"
+    fi
+    
     # Generate default containerd config if it doesn't exist
     if [ ! -f /etc/containerd/config.toml ]; then
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
     fi
     
-    # Configure NVIDIA runtime
-    nvidia-ctk runtime configure --runtime=containerd
+    # Ensure systemd cgroup driver is enabled (required for Kubernetes)
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
     
-    # Restart containerd
+    # Test containerd config before adding NVIDIA runtime
+    log "Testing containerd configuration..."
+    if ! containerd --config /etc/containerd/config.toml config dump > /dev/null; then
+        error "Containerd configuration is invalid, regenerating..."
+        containerd config default > /etc/containerd/config.toml
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+    fi
+    
+    # Restart containerd with basic config first
+    log "Restarting containerd with basic configuration..."
     systemctl restart containerd
+    sleep 10
+    
+    # Verify containerd is working before adding NVIDIA runtime
+    if ! systemctl is-active --quiet containerd; then
+        error "Failed to start containerd with basic configuration"
+        exit 1
+    fi
+    
+    success "Containerd is running with basic configuration"
+    
+    # Now configure NVIDIA runtime
+    log "Adding NVIDIA runtime configuration..."
+    if nvidia-ctk runtime configure --runtime=containerd; then
+        success "NVIDIA runtime configuration added"
+        
+        # Test the new configuration
+        log "Testing NVIDIA runtime configuration..."
+        if containerd --config /etc/containerd/config.toml config dump > /dev/null; then
+            success "NVIDIA runtime configuration is valid"
+            
+            # Restart containerd with NVIDIA configuration
+            log "Restarting containerd with NVIDIA configuration..."
+            systemctl restart containerd
+            sleep 15
+            
+            # Verify containerd is still working
+            if systemctl is-active --quiet containerd; then
+                success "Containerd configured and running with NVIDIA support"
+            else
+                error "Containerd failed to start with NVIDIA configuration"
+                warning "Restoring backup configuration..."
+                
+                # Restore backup if available
+                BACKUP_FILE=$(ls -t /etc/containerd/config.toml.backup.* 2>/dev/null | head -1)
+                if [ -n "$BACKUP_FILE" ]; then
+                    cp "$BACKUP_FILE" /etc/containerd/config.toml
+                    systemctl restart containerd
+                    warning "Restored backup configuration, NVIDIA runtime not configured"
+                else
+                    # Generate clean config
+                    containerd config default > /etc/containerd/config.toml
+                    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+                    systemctl restart containerd
+                    warning "Generated clean configuration, NVIDIA runtime not configured"
+                fi
+                
+                if systemctl is-active --quiet containerd; then
+                    warning "Containerd restored but without NVIDIA support"
+                    warning "You may need to configure NVIDIA runtime manually after reboot"
+                else
+                    error "Failed to restore containerd"
+                    exit 1
+                fi
+            fi
+        else
+            error "NVIDIA runtime configuration is invalid"
+            warning "Restoring backup configuration..."
+            
+            # Restore backup
+            BACKUP_FILE=$(ls -t /etc/containerd/config.toml.backup.* 2>/dev/null | head -1)
+            if [ -n "$BACKUP_FILE" ]; then
+                cp "$BACKUP_FILE" /etc/containerd/config.toml
+            else
+                containerd config default > /etc/containerd/config.toml
+                sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+            fi
+            
+            systemctl restart containerd
+            warning "NVIDIA runtime configuration failed, using basic configuration"
+        fi
+    else
+        error "Failed to configure NVIDIA runtime"
+        warning "Continuing with basic containerd configuration"
+    fi
+    
+    # Final verification
     systemctl enable containerd
     
-    # Verify containerd is running
     if systemctl is-active --quiet containerd; then
-        success "Containerd configured and running with NVIDIA support"
+        success "Containerd is running and enabled for autostart"
     else
-        error "Failed to restart containerd"
+        error "Containerd is not running properly"
         exit 1
     fi
 }
@@ -586,17 +676,78 @@ echo "=============================================="
 echo "POST-REBOOT NVIDIA VERIFICATION"
 echo "=============================================="
 
+# Check and fix containerd first
+log "Checking containerd service..."
+if systemctl is-active --quiet containerd; then
+    success "containerd is running"
+else
+    warning "containerd is not running, attempting to start..."
+    systemctl start containerd
+    sleep 10
+    
+    if systemctl is-active --quiet containerd; then
+        success "containerd started successfully"
+    else
+        error "Failed to start containerd"
+        error "Attempting to fix containerd configuration..."
+        
+        # Backup current config and regenerate
+        if [ -f /etc/containerd/config.toml ]; then
+            cp /etc/containerd/config.toml /etc/containerd/config.toml.broken.$(date +%s)
+        fi
+        
+        # Generate clean config
+        containerd config default > /etc/containerd/config.toml
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+        
+        systemctl start containerd
+        sleep 10
+        
+        if systemctl is-active --quiet containerd; then
+            warning "containerd fixed with basic configuration"
+            warning "NVIDIA runtime may need to be reconfigured"
+        else
+            error "Failed to fix containerd - manual intervention required"
+            exit 1
+        fi
+    fi
+fi
+
+# Check and fix kubelet
+log "Checking kubelet service..."
+if systemctl is-active --quiet kubelet; then
+    success "kubelet is running"
+else
+    warning "kubelet is not running, attempting to start..."
+    
+    # Clean up any corrupted state
+    if [ -f /var/lib/kubelet/config.yaml ]; then
+        mv /var/lib/kubelet/config.yaml /var/lib/kubelet/config.yaml.backup.$(date +%s)
+    fi
+    
+    systemctl start kubelet
+    sleep 15
+    
+    if systemctl is-active --quiet kubelet; then
+        success "kubelet started successfully"
+    else
+        warning "kubelet failed to start - this may be normal and it will retry"
+        info "Check kubelet logs: journalctl -u kubelet -f"
+    fi
+fi
+
 # Test NVIDIA driver
 log "Testing NVIDIA driver..."
 if nvidia-smi; then
     success "NVIDIA driver is working correctly!"
+    NVIDIA_WORKING=true
 else
     error "NVIDIA driver is still not working"
     error "You may need to:"
     error "1. Check if secure boot is disabled"
     error "2. Reinstall the driver"
     error "3. Check kernel compatibility"
-    exit 1
+    NVIDIA_WORKING=false
 fi
 
 # Check kernel modules
@@ -605,20 +756,26 @@ if lsmod | grep nvidia; then
     success "NVIDIA kernel modules are loaded"
 else
     error "NVIDIA kernel modules are not loaded"
-    exit 1
+    if [ "$NVIDIA_WORKING" = false ]; then
+        error "This confirms the NVIDIA driver issue"
+    fi
 fi
 
-# Test container runtime
-log "Testing NVIDIA container runtime..."
-if command -v docker &> /dev/null; then
-    if docker run --rm --gpus all nvidia/cuda:12.2-runtime-ubuntu20.04 nvidia-smi; then
-        success "NVIDIA container runtime is working!"
+# Test container runtime (if NVIDIA is working)
+if [ "$NVIDIA_WORKING" = true ]; then
+    log "Testing NVIDIA container runtime..."
+    if command -v docker &> /dev/null; then
+        if docker run --rm --gpus all nvidia/cuda:12.2-runtime-ubuntu20.04 nvidia-smi; then
+            success "NVIDIA container runtime is working!"
+        else
+            warning "NVIDIA container runtime test failed"
+            warning "You may need to restart Docker: sudo systemctl restart docker"
+            warning "Or reconfigure containerd NVIDIA runtime"
+        fi
     else
-        warning "NVIDIA container runtime test failed"
-        warning "You may need to restart Docker: sudo systemctl restart docker"
+        info "Docker not available for testing"
+        info "Test with containerd: ctr run --rm --gpus all docker.io/nvidia/cuda:12.2-runtime-ubuntu20.04 test nvidia-smi"
     fi
-else
-    info "Docker not available for testing"
 fi
 
 # Check Kubernetes device plugin (if manifest exists)
@@ -634,8 +791,30 @@ if [ -f /root/nvidia-device-plugin.yaml ]; then
 fi
 
 echo ""
-success "✅ Post-reboot verification completed!"
-success "Your NVIDIA GPU setup is ready for use."
+if [ "$NVIDIA_WORKING" = true ]; then
+    success "✅ Post-reboot verification completed!"
+    success "Your NVIDIA GPU setup is ready for use."
+    echo ""
+    info "Next steps:"
+    info "1. Install the Kubernetes device plugin (see above)"
+    info "2. Test GPU workloads in Kubernetes"
+    info "3. Monitor GPU usage with: nvidia-smi"
+else
+    error "❌ NVIDIA driver verification failed"
+    error "The system is accessible but NVIDIA drivers need attention"
+    echo ""
+    info "Recovery options:"
+    info "1. Check secure boot: mokutil --sb-state"
+    info "2. Reinstall drivers: sudo apt install --reinstall nvidia-driver-550"
+    info "3. Check for kernel updates: sudo apt update && sudo apt upgrade"
+    info "4. Verify GPU hardware: lspci | grep -i nvidia"
+fi
+
+echo ""
+info "System status:"
+systemctl is-active --quiet containerd && echo "✅ containerd: running" || echo "❌ containerd: not running"
+systemctl is-active --quiet kubelet && echo "✅ kubelet: running" || echo "⚠️  kubelet: not running (may be starting)"
+systemctl is-active --quiet ssh && echo "✅ SSH: running" || echo "❌ SSH: not running"
 EOF
 
         chmod +x /root/verify-nvidia-post-reboot.sh
