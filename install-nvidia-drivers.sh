@@ -112,7 +112,25 @@ check_kubernetes() {
         return
     fi
     
-    success "Kubernetes detected and running"
+    # Test kubectl connectivity to the cluster
+    log "Testing kubectl connectivity to Kubernetes cluster..."
+    if ! kubectl cluster-info &> /dev/null; then
+        warning "kubectl cannot connect to Kubernetes cluster"
+        warning "This is normal for worker nodes that don't have direct API access"
+        warning "Device plugin installation will be skipped"
+        K8S_AVAILABLE=false
+        return
+    fi
+    
+    # Additional check: try to list nodes
+    if ! kubectl get nodes &> /dev/null; then
+        warning "kubectl cannot list nodes - insufficient permissions or connectivity issues"
+        warning "Device plugin installation will be skipped"
+        K8S_AVAILABLE=false
+        return
+    fi
+    
+    success "Kubernetes detected and kubectl connectivity verified"
     K8S_AVAILABLE=true
 }
 
@@ -245,6 +263,8 @@ configure_containerd() {
 install_device_plugin() {
     if [ "$K8S_AVAILABLE" = false ]; then
         warning "Kubernetes not available, skipping device plugin installation"
+        info "To install the device plugin later, use the following manifest:"
+        info "kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/$NVIDIA_DEVICE_PLUGIN_VERSION/nvidia-device-plugin.yml"
         return
     fi
     
@@ -292,19 +312,56 @@ spec:
         kubernetes.io/arch: amd64
 EOF
 
-    # Apply the device plugin
-    kubectl apply -f /tmp/nvidia-device-plugin.yaml
+    # Apply the device plugin with better error handling
+    log "Applying NVIDIA Device Plugin manifest..."
+    if kubectl apply -f /tmp/nvidia-device-plugin.yaml --validate=false; then
+        success "NVIDIA Device Plugin installed successfully"
+    else
+        error "Failed to install NVIDIA Device Plugin"
+        warning "This might be due to:"
+        warning "1. Insufficient permissions"
+        warning "2. Network connectivity issues"
+        warning "3. Kubernetes API server not accessible from this node"
+        echo ""
+        info "Manual installation options:"
+        info "1. Copy the manifest to a machine with kubectl access:"
+        info "   scp /tmp/nvidia-device-plugin.yaml <control-plane>:/tmp/"
+        info "2. Apply from control plane:"
+        info "   kubectl apply -f /tmp/nvidia-device-plugin.yaml"
+        info "3. Or use the official manifest:"
+        info "   kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/$NVIDIA_DEVICE_PLUGIN_VERSION/nvidia-device-plugin.yml"
+        echo ""
+        warning "Continuing with installation - device plugin can be installed later"
+    fi
     
-    # Clean up temp file
-    rm -f /tmp/nvidia-device-plugin.yaml
-    
-    success "NVIDIA Device Plugin installed"
+    # Keep the manifest file for manual installation
+    if [ -f /tmp/nvidia-device-plugin.yaml ]; then
+        cp /tmp/nvidia-device-plugin.yaml /root/nvidia-device-plugin.yaml
+        info "Device plugin manifest saved to: /root/nvidia-device-plugin.yaml"
+        rm -f /tmp/nvidia-device-plugin.yaml
+    fi
 }
 
 # Create test GPU workload
 create_test_workload() {
     if [ "$K8S_AVAILABLE" = false ]; then
         warning "Kubernetes not available, skipping test workload creation"
+        info "To create a test workload later, use:"
+        info "kubectl apply -f - <<EOF"
+        info "apiVersion: v1"
+        info "kind: Pod"
+        info "metadata:"
+        info "  name: gpu-test"
+        info "spec:"
+        info "  restartPolicy: Never"
+        info "  containers:"
+        info "  - name: gpu-test"
+        info "    image: nvidia/cuda:12.2-runtime-ubuntu20.04"
+        info "    command: [\"nvidia-smi\"]"
+        info "    resources:"
+        info "      limits:"
+        info "        nvidia.com/gpu: 1"
+        info "EOF"
         return
     fi
     
@@ -331,12 +388,17 @@ spec:
         nvidia.com/gpu: 1
 EOF
 
-        kubectl apply -f /tmp/gpu-test.yaml
-        rm -f /tmp/gpu-test.yaml
+        if kubectl apply -f /tmp/gpu-test.yaml --validate=false; then
+            success "Test GPU workload created"
+            info "Check the test with: kubectl logs gpu-test"
+            info "Clean up with: kubectl delete pod gpu-test"
+        else
+            warning "Failed to create test workload - kubectl connectivity issues"
+            info "Test workload manifest saved to: /tmp/gpu-test.yaml"
+            info "Apply manually from a machine with cluster access"
+        fi
         
-        success "Test GPU workload created"
-        info "Check the test with: kubectl logs gpu-test"
-        info "Clean up with: kubectl delete pod gpu-test"
+        rm -f /tmp/gpu-test.yaml
     fi
 }
 
@@ -352,16 +414,32 @@ verify_installation() {
         REBOOT_REQUIRED=false
     fi
     
-    # Test NVIDIA driver (if not reboot required)
-    if [ "$REBOOT_REQUIRED" = false ]; then
-        echo ""
-        info "Testing NVIDIA driver..."
-        if command -v nvidia-smi &> /dev/null; then
+    # Test NVIDIA driver
+    echo ""
+    info "Testing NVIDIA driver..."
+    if command -v nvidia-smi &> /dev/null; then
+        if nvidia-smi &> /dev/null; then
             nvidia-smi
-            success "NVIDIA driver is working"
+            success "NVIDIA driver is working correctly"
+            DRIVER_WORKING=true
         else
-            warning "nvidia-smi not available yet - may require reboot"
+            warning "nvidia-smi command failed - driver may not be loaded"
+            warning "This usually indicates a reboot is required"
+            REBOOT_REQUIRED=true
+            DRIVER_WORKING=false
         fi
+    else
+        warning "nvidia-smi not available - driver installation may be incomplete"
+        REBOOT_REQUIRED=true
+        DRIVER_WORKING=false
+    fi
+    
+    # Check if driver modules are loaded
+    if lsmod | grep -q nvidia; then
+        success "NVIDIA kernel modules are loaded"
+    else
+        warning "NVIDIA kernel modules are not loaded - reboot required"
+        REBOOT_REQUIRED=true
     fi
     
     # Check containerd configuration
@@ -369,15 +447,21 @@ verify_installation() {
     info "Containerd status:"
     systemctl status containerd --no-pager -l
     
-    # Check Kubernetes device plugin (if available)
-    if [ "$K8S_AVAILABLE" = true ]; then
+    # Check Kubernetes device plugin (if available and driver is working)
+    if [ "$K8S_AVAILABLE" = true ] && [ "$DRIVER_WORKING" = true ]; then
         echo ""
         info "NVIDIA Device Plugin status:"
-        kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds
-        
-        echo ""
-        info "Node GPU capacity:"
-        kubectl describe nodes | grep -A 5 "Capacity:" | grep nvidia.com/gpu || echo "GPU capacity not yet available"
+        if kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds 2>/dev/null; then
+            echo ""
+            info "Node GPU capacity:"
+            kubectl describe nodes | grep -A 5 "Capacity:" | grep nvidia.com/gpu || echo "GPU capacity not yet available"
+        else
+            warning "Cannot check device plugin status - kubectl connectivity issues"
+        fi
+    elif [ "$K8S_AVAILABLE" = true ] && [ "$DRIVER_WORKING" = false ]; then
+        warning "Skipping Kubernetes GPU checks - driver not working yet"
+        info "After reboot, check device plugin with:"
+        info "kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds"
     fi
 }
 
@@ -399,7 +483,9 @@ display_post_install_info() {
     echo "• Containerd: Configured for GPU support"
     
     if [ "$K8S_AVAILABLE" = true ]; then
-        echo "• Kubernetes: Device plugin installed"
+        echo "• Kubernetes: Device plugin installation attempted"
+    else
+        echo "• Kubernetes: Device plugin installation skipped (no cluster access)"
     fi
     
     echo ""
@@ -419,8 +505,27 @@ display_post_install_info() {
         highlight "sudo reboot"
         echo ""
         warning "After reboot, verify with: nvidia-smi"
+        warning "Or run the verification script: sudo /root/verify-nvidia-post-reboot.sh"
+        
+        if [ "$K8S_AVAILABLE" = false ]; then
+            echo ""
+            warning "Kubernetes Device Plugin Installation:"
+            warning "Since kubectl couldn't connect to the cluster, install the device plugin manually:"
+            warning "1. From a machine with cluster access (control plane):"
+            warning "   kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/$NVIDIA_DEVICE_PLUGIN_VERSION/nvidia-device-plugin.yml"
+            warning "2. Or copy the saved manifest:"
+            warning "   scp root@$(hostname):/root/nvidia-device-plugin.yaml /tmp/"
+            warning "   kubectl apply -f /tmp/nvidia-device-plugin.yaml"
+        fi
     else
         success "✅ Installation complete - no reboot required"
+        
+        if [ "$K8S_AVAILABLE" = false ]; then
+            echo ""
+            warning "Kubernetes Device Plugin Installation:"
+            warning "Install the device plugin from a machine with cluster access:"
+            warning "kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/$NVIDIA_DEVICE_PLUGIN_VERSION/nvidia-device-plugin.yml"
+        fi
     fi
     
     echo ""
@@ -442,6 +547,101 @@ display_post_install_info() {
     warning "1. Ensure your workloads request GPU resources"
     warning "2. Use NVIDIA-compatible container images"
     warning "3. Monitor GPU usage with nvidia-smi"
+    
+    if [ -f /root/nvidia-device-plugin.yaml ]; then
+        echo ""
+        info "Device plugin manifest saved to: /root/nvidia-device-plugin.yaml"
+        info "Use this file for manual installation if needed"
+    fi
+}
+
+# Create post-reboot script
+create_post_reboot_script() {
+    if [ "$REBOOT_REQUIRED" = true ]; then
+        log "Creating post-reboot verification script..."
+        
+        cat <<'EOF' > /root/verify-nvidia-post-reboot.sh
+#!/bin/bash
+
+# Post-reboot NVIDIA verification script
+# Run this script after rebooting to verify the installation
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log() { echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+info() { echo -e "${CYAN}[INFO]${NC} $1"; }
+
+echo "=============================================="
+echo "POST-REBOOT NVIDIA VERIFICATION"
+echo "=============================================="
+
+# Test NVIDIA driver
+log "Testing NVIDIA driver..."
+if nvidia-smi; then
+    success "NVIDIA driver is working correctly!"
+else
+    error "NVIDIA driver is still not working"
+    error "You may need to:"
+    error "1. Check if secure boot is disabled"
+    error "2. Reinstall the driver"
+    error "3. Check kernel compatibility"
+    exit 1
+fi
+
+# Check kernel modules
+log "Checking NVIDIA kernel modules..."
+if lsmod | grep nvidia; then
+    success "NVIDIA kernel modules are loaded"
+else
+    error "NVIDIA kernel modules are not loaded"
+    exit 1
+fi
+
+# Test container runtime
+log "Testing NVIDIA container runtime..."
+if command -v docker &> /dev/null; then
+    if docker run --rm --gpus all nvidia/cuda:12.2-runtime-ubuntu20.04 nvidia-smi; then
+        success "NVIDIA container runtime is working!"
+    else
+        warning "NVIDIA container runtime test failed"
+        warning "You may need to restart Docker: sudo systemctl restart docker"
+    fi
+else
+    info "Docker not available for testing"
+fi
+
+# Check Kubernetes device plugin (if manifest exists)
+if [ -f /root/nvidia-device-plugin.yaml ]; then
+    echo ""
+    warning "Kubernetes Device Plugin Installation:"
+    warning "The device plugin manifest is available at: /root/nvidia-device-plugin.yaml"
+    warning "Install it from a machine with cluster access:"
+    warning "kubectl apply -f /root/nvidia-device-plugin.yaml"
+    echo ""
+    warning "Or use the official manifest:"
+    warning "kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.16.2/nvidia-device-plugin.yml"
+fi
+
+echo ""
+success "✅ Post-reboot verification completed!"
+success "Your NVIDIA GPU setup is ready for use."
+EOF
+
+        chmod +x /root/verify-nvidia-post-reboot.sh
+        success "Post-reboot script created: /root/verify-nvidia-post-reboot.sh"
+        info "Run this script after reboot: sudo /root/verify-nvidia-post-reboot.sh"
+    fi
 }
 
 # Main installation function
@@ -472,6 +672,7 @@ main() {
     # Verification and information
     verify_installation
     display_post_install_info
+    create_post_reboot_script
 }
 
 # Run main function
